@@ -14,7 +14,10 @@ def pyload(name):
     return ns
 
 
-def create_symlink(sklearn_path, link_path):
+def create_symlink():
+    import sklearn  # Import scikit-learn here
+    sklearn_path = os.path.dirname(sklearn.__file__)
+    link_path = os.path.join(repo_root, 'sklearn')
     if not os.path.exists(link_path):
         os.symlink(sklearn_path, link_path)
 
@@ -35,7 +38,7 @@ version = ns["__version__"]
 sklearn_path = os.path.dirname(sklearn.__file__)
 link_path = os.path.join(repo_root,'sklearn')
 
-create_symlink(sklearn_path, link_path)
+create_symlink()
 
 ext_modules=[Extension("pdc_dp_means.dp_means_cython",
     sources = ['pdc_dp_means/dp_means_cython.pyx'],
