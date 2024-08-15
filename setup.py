@@ -4,6 +4,7 @@ from Cython.Build import cythonize
 from distutils.command.build_ext import build_ext
 import numpy
 import os
+import sklearn
 
 
 def pyload(name):
