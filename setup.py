@@ -9,17 +9,7 @@ def pyload(name):
         exec(compile(f.read(), name, "exec"), ns)
     return ns
 
-def create_symlink():
-    import sklearn  # Import scikit-learn here
-    sklearn_path = os.path.dirname(sklearn.__file__)
-    link_path = os.path.join(repo_root, 'sklearn')
-    if not os.path.exists(link_path):
-        os.symlink(sklearn_path, link_path)
-    return link_path
-
-def remove_symlink(link_path):
-    if os.path.exists(link_path):
-        os.remove(link_path)
+# No create_symlink or sklearn import here
 
 repo_root = os.path.abspath(os.path.dirname(__file__))
 
@@ -28,9 +18,6 @@ with open(os.path.join(repo_root, "README.md"), encoding="utf-8") as f:
 
 ns = pyload(os.path.join(repo_root, "pdc_dp_means", "release.py"))
 version = ns["__version__"]
-
-# Call create_symlink() and store the link_path
-link_path = create_symlink()
 
 ext_modules = [
     Extension(
@@ -80,5 +67,20 @@ setup(
     },
 )
 
-# Remove the symlink after setup is done
-remove_symlink(link_path)
+# Create symlink after installation
+def post_install():
+    import sklearn
+    sklearn_path = os.path.dirname(sklearn.__file__)
+    link_path = os.path.join(repo_root, 'sklearn')
+    if not os.path.exists(link_path):
+        os.symlink(sklearn_path, link_path)
+
+    # Clean up after setup
+    remove_symlink(link_path)
+
+def remove_symlink(link_path):
+    if os.path.exists(link_path):
+        os.remove(link_path)
+
+# Run the post-install actions after setup completes
+post_install()
