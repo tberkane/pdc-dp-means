@@ -15,7 +15,8 @@ from sklearn.cluster._kmeans import (
 from sklearn.utils import check_array, check_random_state, deprecated
 from sklearn.utils._openmp_helpers import _openmp_effective_n_threads
 from sklearn.utils.extmath import row_norms
-from sklearn.utils.fixes import threadpool_limits
+
+from threadpoolctl import threadpool_limits
 from sklearn.utils.sparsefuncs_fast import assign_rows_csr
 from sklearn.utils.validation import _check_sample_weight, check_is_fitted
 
@@ -81,9 +82,7 @@ def _dpmeans_single_lloyd(
             if max_clusters is None or max_clusters > centers.shape[0]:
                 if max_index[0] != -1 and max_distance[0] > delta:
                     centers = np.vstack((centers, X[max_index])).astype(X.dtype)
-                    centers_new = np.vstack((centers_new, X[max_index])).astype(
-                        X.dtype
-                    )
+                    centers_new = np.vstack((centers_new, X[max_index])).astype(X.dtype)
                     weight_in_clusters = np.hstack([weight_in_clusters, [0]]).astype(
                         X.dtype
                     )
@@ -327,6 +326,7 @@ class DPMeans(KMeans):
                 x_squared_norms=x_squared_norms,
                 init=init,
                 random_state=random_state,
+                sample_weight=sample_weight,
             )
 
             if self.verbose:
@@ -1007,9 +1007,7 @@ class MiniBatchDPMeans(KMeans):
             # Perform the iterative optimization until convergence
             for i in range(n_steps):
                 # Sample a minibatch from the full dataset
-                minibatch_indices = random_state.randint(
-                    0, n_samples, self._batch_size
-                )
+                minibatch_indices = random_state.randint(0, n_samples, self._batch_size)
                 tic = time()
                 # Perform the actual update step on the minibatch data
                 (
