@@ -3,6 +3,19 @@ from setuptools.extension import Extension
 from Cython.Build import cythonize
 import numpy
 
+def pyload(name):
+    ns = {}
+    with open(name, encoding="utf-8") as f:
+        exec(compile(f.read(), name, "exec"), ns)
+    return ns
+
+repo_root = os.path.abspath(os.path.dirname(__file__))
+with open(os.path.join(repo_root, "README.md"), encoding="utf-8") as f:
+    long_description = f.read()
+
+ns = pyload(os.path.join(repo_root, "pdc_dp_means", "release.py"))
+version = ns["__version__"]
+
 def get_extensions():
     extensions = [
         Extension(
