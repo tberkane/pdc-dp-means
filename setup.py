@@ -36,7 +36,7 @@ setup(
     license="BSD3",
     packages=find_packages(),
     package_data={
-        "pdc-dp-means": ["docs/*"],
+        "pdc_dp_means": ["*.so", "*.pyd", "docs/*"],
     },
     keywords="dp-means clustering",
     classifiers=[
