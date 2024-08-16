@@ -4,7 +4,6 @@ from Cython.Build import cythonize
 from distutils.command.build_ext import build_ext
 import numpy
 import os
-import sklearn
 
 
 def pyload(name):
@@ -32,23 +31,23 @@ with open(os.path.join(repo_root, "README.md"), encoding="utf-8") as f:
 ns = pyload(os.path.join(repo_root, "pdc_dp_means", "release.py"))
 version = ns["__version__"]
 
-sklearn_path = os.path.dirname(sklearn.__file__)
-link_path = os.path.join(repo_root,'sklearn')
+# sklearn_path = os.path.dirname(sklearn.__file__)
+# link_path = os.path.join(repo_root,'sklearn')
 
-create_symlink(sklearn_path, link_path)
+# create_symlink(sklearn_path, link_path)
 
 ext_modules=[Extension("pdc_dp_means.dp_means_cython",
     sources = ['pdc_dp_means/dp_means_cython.pyx'],
     include_dirs=[numpy.get_include()])]#, os.path.dirname(link_path)])]
 
 
-ext_modules = [
-    Extension(
-        "pdc_dp_means.dp_means_cython",
-        sources=["pdc_dp_means/dp_means_cython.c"],
-        include_dirs=[numpy.get_include()],
-    )
-]  # , os.path.dirname(link_path)])]
+# ext_modules = [
+#     Extension(
+#         "pdc_dp_means.dp_means_cython",
+#         sources=["pdc_dp_means/dp_means_cython.c"],
+#         include_dirs=[numpy.get_include()],
+#     )
+# ]  # , os.path.dirname(link_path)])]
 
 
 setup(
