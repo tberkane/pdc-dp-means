@@ -1,39 +1,33 @@
 from time import time
 
-
 import numpy as np
 import scipy.sparse as sp
+from threadpoolctl import threadpool_limits
 
-from sklearn.cluster._k_means_common import _inertia_dense
-from sklearn.cluster._k_means_lloyd import lloyd_iter_chunked_dense
+from sklearn.cluster._k_means_common_cos import _inertia_dense
+from sklearn.cluster._k_means_lloyd_cos import lloyd_iter_chunked_dense
 from sklearn.cluster._kmeans import (
-    KMeans,
     _labels_inertia_threadpool_limit,
     _minibatch_update_dense,
 )
-
-from sklearn.utils import check_array, check_random_state, deprecated
+from sklearn.utils import check_array, check_random_state
 from sklearn.utils._openmp_helpers import _openmp_effective_n_threads
 from sklearn.utils.extmath import row_norms
-
-from threadpoolctl import threadpool_limits
 from sklearn.utils.sparsefuncs_fast import assign_rows_csr
 from sklearn.utils.validation import _check_sample_weight, check_is_fitted
-
 from .dp_means_cython import lloyd_iter_chunked_dense_with_min_sample
 
 
 def _dpmeans_single_lloyd(
-    X,
-    sample_weight,
-    centers_init,
-    max_iter=300,
-    verbose=False,
-    x_squared_norms=None,
-    tol=1e-4,
-    n_threads=1,
-    delta=1.0,
-    max_clusters=None,
+        X,
+        sample_weight,
+        centers_init,
+        max_iter=300,
+        verbose=False,
+        tol=1e-4,
+        n_threads=1,
+        delta=1.0,
+        max_clusters=None,
 ):
     n_clusters = centers_init.shape[0]
 
@@ -45,7 +39,7 @@ def _dpmeans_single_lloyd(
     weight_in_clusters = np.zeros(n_clusters, dtype=X.dtype)
     center_shift = np.zeros(n_clusters, dtype=X.dtype)
     max_index = np.full(1, -1, dtype=np.int32)
-    max_distance = np.full(1, -1, dtype=centers.dtype)
+    max_distance = np.full(1, 2.0, dtype=centers.dtype)  # cosine distance is between 0 and 2
 
     lloyd_iter = lloyd_iter_chunked_dense_with_min_sample
     lloyd_kmeans_iter = lloyd_iter_chunked_dense
@@ -53,6 +47,11 @@ def _dpmeans_single_lloyd(
 
     strict_convergence = False
     iter_time = []
+
+    # Normalize input data and centers
+    X = X / np.linalg.norm(X, axis=1)[:, np.newaxis]
+    centers = centers / np.linalg.norm(centers, axis=1)[:, np.newaxis]
+
     # all_centers = [None]
     # Threadpoolctl context to limit the number of threads in second level of
     # nested parallelism (i.e. BLAS) to avoid oversubsciption.
@@ -92,6 +91,10 @@ def _dpmeans_single_lloyd(
             # update_centers(X,sample_weight,labels,centers_new,weight_in_clusters)
 
             centers, centers_new = centers_new, centers
+
+            # Normalize new centers
+            centers = centers / np.linalg.norm(centers, axis=1)[:, np.newaxis]
+
             toc = time()
             iter_time.append(toc - tic)
             # all_centers.append(centers)
@@ -105,8 +108,7 @@ def _dpmeans_single_lloyd(
                     break
                 else:
                     # No strict convergence, check for tol based convergence.
-                    # Thomas: sum of squared euclidean shift distances. I want the sum of cosine distances
-                    center_shift_tot = (center_shift**2).sum()
+                    center_shift_tot = np.sum(1 - np.sum(centers * centers_new, axis=1))
                     if center_shift_tot <= tol:
                         if verbose:
                             print(
@@ -231,18 +233,18 @@ class DPMeans(KMeans):
     """
 
     def __init__(
-        self,
-        n_clusters=8,
-        *,
-        init="k-means++",
-        n_init=10,
-        max_iter=300,
-        tol=1e-4,
-        verbose=0,
-        random_state=None,
-        copy_x=True,
-        delta=1.0,
-        max_clusters=None,
+            self,
+            n_clusters=8,
+            *,
+            init="k-means++",
+            n_init=10,
+            max_iter=300,
+            tol=1e-4,
+            verbose=0,
+            random_state=None,
+            copy_x=True,
+            delta=1.0,
+            max_clusters=None,
     ):
         super().__init__(
             n_clusters=n_clusters,
@@ -297,23 +299,15 @@ class DPMeans(KMeans):
         sample_weight = _check_sample_weight(sample_weight, X, dtype=X.dtype)
         self._n_threads = _openmp_effective_n_threads()
 
+        # Normalize input data
+        X = X / np.linalg.norm(X, axis=1)[:, np.newaxis]
+
         # Validate init array
         init = self.init
         if hasattr(init, "__array__"):
             init = check_array(init, dtype=X.dtype, copy=True, order="C")
             self._validate_center_shape(X, init)
-
-        # subtract of mean of x for more accurate distance computations
-        if not sp.issparse(X):
-            X_mean = X.mean(axis=0)
-            # The copy was already done above
-            X -= X_mean
-
-            if hasattr(init, "__array__"):
-                init -= X_mean
-
-        # precompute squared norms of data points
-        x_squared_norms = row_norms(X, squared=True)
+            init = init / np.linalg.norm(init, axis=1)[:, np.newaxis]
 
         dpmeans_single = _dpmeans_single_lloyd
         self._check_mkl_vcomp(X, X.shape[0])
@@ -322,9 +316,8 @@ class DPMeans(KMeans):
 
         for i in range(self._n_init):
             # Initialize centers
-            centers_init = self._init_centroids(
+            centers_init = self._init_centroids_cos(
                 X,
-                x_squared_norms=x_squared_norms,
                 init=init,
                 random_state=random_state,
                 sample_weight=sample_weight,
@@ -342,7 +335,6 @@ class DPMeans(KMeans):
                 max_iter=self.max_iter,
                 verbose=self.verbose,
                 tol=self._tol,
-                x_squared_norms=x_squared_norms,
                 n_threads=self._n_threads,
                 delta=self.delta,
                 max_clusters=self.max_clusters,
@@ -361,10 +353,6 @@ class DPMeans(KMeans):
                 best_inertia = inertia
                 best_n_iter = n_iter_
 
-        if not sp.issparse(X):
-            if not self.copy_x:
-                X += X_mean
-            best_centers += X_mean
         self.n_clusters = best_centers.shape[0]
         self.cluster_centers_ = best_centers
         self.labels_ = best_labels
@@ -374,9 +362,50 @@ class DPMeans(KMeans):
         # self.all_centers = all_centers
         return self
 
+    def _init_centroids(self, X, init, random_state, sample_weight):
+        """Initialize centroids for cosine k-means."""
+        n_samples = X.shape[0]
+
+        if isinstance(init, str) and init == 'k-means++':
+            centers = _k_init_cosine(
+                X, self.n_clusters, random_state=random_state,
+                sample_weight=sample_weight
+            )
+
+        return centers / np.linalg.norm(centers, axis=1)[:, np.newaxis]
+
+
+def _k_init_cosine(X, n_clusters, random_state, sample_weight=None):
+    """Init n_clusters seeds with a method similar to k-means++, but using cosine distance."""
+    n_samples, n_features = X.shape
+    centers = np.empty((n_clusters, n_features), dtype=X.dtype)
+
+    if sample_weight is None:
+        sample_weight = np.ones(n_samples, dtype=X.dtype)
+
+    # Choose the first center randomly
+    center_id = random_state.choice(n_samples, size=1, p=sample_weight / sample_weight.sum())
+    centers[0] = X[center_id]
+
+    # Compute distances from the first center
+    distances = 1 - np.dot(X, centers[0])
+
+    for c in range(1, n_clusters):
+        # Choose next center probability proportional to cosine distance
+        probabilities = distances * sample_weight
+        probabilities /= probabilities.sum()
+        next_center_id = random_state.choice(n_samples, size=1, p=probabilities)
+        centers[c] = X[next_center_id]
+
+        # Compute distances from new center
+        new_distances = 1 - np.dot(X, centers[c])
+        distances = np.minimum(distances, new_distances)
+
+    return centers
+
 
 def _labels_inertia_with_min_sample(
-    X, sample_weight, x_squared_norms, centers, n_threads=1
+        X, sample_weight, x_squared_norms, centers, n_threads=1
 ):
     """E step of the K-means EM algorithm.
 
@@ -445,17 +474,17 @@ def _labels_inertia_with_min_sample(
 
 
 def _mini_batch_step_with_max_distance(
-    X,
-    x_squared_norms,
-    sample_weight,
-    centers,
-    centers_new,
-    weight_sums,
-    random_state,
-    random_reassign=False,
-    reassignment_ratio=0.01,
-    verbose=False,
-    n_threads=1,
+        X,
+        x_squared_norms,
+        sample_weight,
+        centers,
+        centers_new,
+        weight_sums,
+        random_state,
+        random_reassign=False,
+        reassignment_ratio=0.01,
+        verbose=False,
+        n_threads=1,
 ):
     """Incremental update of the centers for the Minibatch K-Means algorithm.
 
@@ -535,7 +564,7 @@ def _mini_batch_step_with_max_distance(
 
         # pick at most .5 * batch_size samples as new centers
         if to_reassign.sum() > 0.5 * X.shape[0]:
-            indices_dont_reassign = np.argsort(weight_sums)[int(0.5 * X.shape[0]) :]
+            indices_dont_reassign = np.argsort(weight_sums)[int(0.5 * X.shape[0]):]
             to_reassign[indices_dont_reassign] = False
         n_reassigns = to_reassign.sum()
 
@@ -725,21 +754,21 @@ class MiniBatchDPMeans(KMeans):
     """
 
     def __init__(
-        self,
-        n_clusters=1,
-        *,
-        init="k-means++",
-        max_iter=100,
-        batch_size=1024,
-        verbose=0,
-        compute_labels=True,
-        random_state=None,
-        tol=0.0,
-        max_no_improvement=10,
-        init_size=None,
-        n_init=3,
-        reassignment_ratio=0.01,
-        delta=1.0,
+            self,
+            n_clusters=1,
+            *,
+            init="k-means++",
+            max_iter=100,
+            batch_size=1024,
+            verbose=0,
+            compute_labels=True,
+            random_state=None,
+            tol=0.0,
+            max_no_improvement=10,
+            init_size=None,
+            n_init=3,
+            reassignment_ratio=0.01,
+            delta=1.0,
     ):
         super().__init__(
             n_clusters=n_clusters,
@@ -819,7 +848,7 @@ class MiniBatchDPMeans(KMeans):
             )
 
     def _mini_batch_convergence(
-        self, step, n_steps, n_samples, centers_squared_diff, batch_inertia
+            self, step, n_steps, n_samples, centers_squared_diff, batch_inertia
     ):
         """Helper function to encapsulate the early stopping logic"""
         # Normalize inertia to be able to compare values when
@@ -871,8 +900,8 @@ class MiniBatchDPMeans(KMeans):
             self._no_improvement += 1
 
         if (
-            self.max_no_improvement is not None
-            and self._no_improvement >= self.max_no_improvement
+                self.max_no_improvement is not None
+                and self._no_improvement >= self.max_no_improvement
         ):
             if self.verbose:
                 print(
@@ -893,7 +922,7 @@ class MiniBatchDPMeans(KMeans):
         """
         self._n_since_last_reassign += self._batch_size
         if (self._counts == 0).any() or self._n_since_last_reassign >= (
-            10 * self.n_clusters
+                10 * self.n_clusters
         ):
             self._n_since_last_reassign = 0
             return True
@@ -1050,7 +1079,7 @@ class MiniBatchDPMeans(KMeans):
                 self.iter_centers.append(centers)
                 # Monitor convergence and do early stopping if necessary
                 if new_cluster is False and self._mini_batch_convergence(
-                    i, n_steps, n_samples, centers_squared_diff, batch_inertia
+                        i, n_steps, n_samples, centers_squared_diff, batch_inertia
                 ):
                     break
 
@@ -1069,8 +1098,8 @@ class MiniBatchDPMeans(KMeans):
             self.inertia_ += self.delta * self.cluster_centers_.shape[0]
         else:
             self.inertia_ = (
-                self._ewa_inertia * n_samples
-                + self.delta * self.cluster_centers_.shape[0]
+                    self._ewa_inertia * n_samples
+                    + self.delta * self.cluster_centers_.shape[0]
             )
 
         return self
